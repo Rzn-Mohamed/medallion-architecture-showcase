@@ -1,18 +1,12 @@
-> **⚠️ SHOWCASE NOTICE**
-> This repository is a **sanitized, public showcase** of a real production data engineering system.
-> All proprietary business logic, internal source-system names, credentials, and domain-specific data
-> have been removed or replaced with generic equivalents. The code is shared for **educational and
-> portfolio purposes only** and does **not** represent, expose, or reproduce any confidential
-> information from the original implementation.
+
+> [!WARNING]
+> **SHOWCASE NOTICE** — This repository is a **sanitized, public showcase** of a real production data engineering system. All proprietary business logic, internal source-system names, credentials, and domain-specific data have been removed or replaced with generic equivalents. The code is shared for **educational and portfolio purposes only** and does **not** represent, expose, or reproduce any confidential information from the original implementation.
 
 ---
 
 # Medallion Architecture Lakehouse — End-to-End Data Engineering Showcase
 
-A fully containerized, production-inspired **Medallion Architecture** (Bronze → Silver → Gold) built
-entirely on open-source tooling. This showcase demonstrates how a modern data lakehouse can be
-orchestrated, catalogued, and served — from raw ingestion through ML feature engineering — on a
-single developer machine.
+A fully containerized, production-inspired **Medallion Architecture** (Bronze → Silver → Gold) built entirely on open-source tooling. This showcase demonstrates how a modern data lakehouse can be orchestrated, catalogued, and served — from raw ingestion through ML feature engineering — on a single developer machine.
 
 ![Architecture with Technology Stack](images/architecture_technology_logos.png)
 
@@ -22,6 +16,7 @@ single developer machine.
 
 - [Overview](#overview)
 - [Architecture](#architecture)
+- [Key Engineering Achievements](#key-engineering-achievements)
 - [Technology Stack](#technology-stack)
 - [Repository Structure](#repository-structure)
 - [Pipeline Walkthrough](#pipeline-walkthrough)
@@ -42,14 +37,15 @@ single developer machine.
 This project implements a **complete batch data pipeline** for a financial services domain, specifically architected to power a distributed predictive savings system. Designed for high-volume batch processing, this architecture successfully ingested, harmonized, and transformed massive datasets to feed downstream machine learning models.
 
 **Production Scale Highlights:**
-* **Data Volume:** Engineered to process over **58 GB** of raw daily ingestion data.
-* **Source Complexity:** Harmonized **47 distinct source files** with diverging schemas.
-* **Throughput:** Processed and transformed over **one billion individual records** through the Medallion architecture.
+
+- **Data Volume:** Engineered to process over **58 GB** of raw daily ingestion data.
+- **Source Complexity:** Harmonized **47 distinct source files** with diverging schemas.
+- **Throughput:** Processed and transformed over **one billion individual records** through the Medallion architecture.
 
 The pipeline covers the following core concerns:
 
 | Concern | Approach |
-|---------|---------|
+|---------|----------|
 | **Ingestion** | Apache NiFi reads raw source files, converts them to Parquet, and lands them in HDFS |
 | **Orchestration** | An Airflow DAG sequences every stage, manages container lifecycles, and sends email alerts |
 | **Storage** | Hadoop HDFS as the distributed filesystem, with three warehouse zones (Bronze / Silver / Gold) |
@@ -77,10 +73,10 @@ The pipeline covers the following core concerns:
 
 ## Key Engineering Achievements
 
-* **Distributed Processing at Scale:** Built resilient PySpark jobs capable of distributed joins and aggregations across 1 billion+ rows, utilizing partitioning and caching strategies to optimize Spark cluster memory.
-* **Schema Evolution & Harmonization:** Developed a robust Silver layer config that dynamically merges up to 4 distinct Bronze tables per entity type (`allowMissingColumns=True`), standardizing complex and evolving financial data schemas.
-* **Resource-Aware Orchestration:** Designed an Airflow DAG that programmatically manages Docker container lifecycles (spinning NiFi and Spark workers up and down via API), ensuring a massive data pipeline could execute reliably within a strict 12 GB local RAM envelope.
-* **Automated Data Quality Gates:** Integrated automated verification tasks using the WebHDFS REST API to guarantee data integrity before allowing the pipeline to advance to the next Medallion layer.
+- **Distributed Processing at Scale:** Built resilient PySpark jobs capable of distributed joins and aggregations across 1 billion+ rows, utilizing partitioning and caching strategies to optimize Spark cluster memory.
+- **Schema Evolution & Harmonization:** Developed a robust Silver layer config that dynamically merges up to 4 distinct Bronze tables per entity type (`allowMissingColumns=True`), standardizing complex and evolving financial data schemas.
+- **Resource-Aware Orchestration:** Designed an Airflow DAG that programmatically manages Docker container lifecycles (spinning NiFi and Spark workers up and down via API), ensuring a massive data pipeline could execute reliably within a strict 12 GB local RAM envelope.
+- **Automated Data Quality Gates:** Integrated automated verification tasks using the WebHDFS REST API to guarantee data integrity before allowing the pipeline to advance to the next Medallion layer.
 
 ---
 
@@ -117,7 +113,6 @@ medallion-architecture-showcase/
 │   └── jobs/
 │       ├── bronze_catalog.py           # Hive table registration for Bronze
 │       ├── silver_job.py               # Silver cleaning & casting
-│       ├── silver_config.py            # Silver table schema definitions
 │       ├── gold_job.py                 # Gold feature engineering
 │       └── notebooks/                  # ML training notebooks (outputs cleared)
 ├── hadoop/
@@ -144,6 +139,7 @@ medallion-architecture-showcase/
 ### Ingestion — Apache NiFi
 
 NiFi runs a multi-processor flow that:
+
 1. **ListFile** — watches a mounted raw-data directory for new files
 2. **FetchFile** + **ConvertRecord** — converts CSV/fixed-width input to Parquet
 3. **RouteOnAttribute** — routes valid vs. invalid records to separate paths
@@ -170,6 +166,7 @@ ensure_nifi_running
 ```
 
 **Key design decisions:**
+
 - **Container lifecycle management** — Airflow starts/stops the NiFi and Spark-Worker Docker containers on demand to stay within a 12 GB RAM envelope.
 - **HDFS integrity checks** — `verify_hdfs()` calls the WebHDFS REST API to confirm file counts before advancing each stage.
 - **Polling with stability detection** — `wait_for_nifi()` waits for the processor group to become idle for `N` consecutive poll rounds before proceeding, avoiding false-early-completions.
@@ -198,7 +195,7 @@ ensure_nifi_running
 1. **Multi-source union** — merges 2–4 Bronze tables per entity (with `allowMissingColumns=True` where schemas diverge across source extracts)
 2. **Rename / coalesce** — harmonises column names across sources
 3. **Type casting** — uses a per-table `casts` dict to enforce `int`, `double`, `date` types
-4. **Normalisation** — fixes encoding variants in categorical fields (e.g. gender)
+4. **Normalisation** — fixes encoding variants in categorical fields
 5. **Quality gate** — applies `not_null`, `non_negative`, and date-range filters
 6. **Deduplication** — `dropDuplicates()` on configured key columns
 7. **Write + Hive registration** — Parquet write to `/warehouse/silver/`, then `DROP + CREATE EXTERNAL TABLE` in Hive
@@ -234,7 +231,7 @@ The resulting Gold master table is partitioned for high-performance reads and se
 ### 1. Clone & configure
 
 ```bash
-git clone https://github.com/your-username/medallion-architecture-showcase.git
+git clone https://github.com/Rzn-Mohamed/medallion-architecture-showcase.git
 cd medallion-architecture-showcase
 cp .env.example .env        # fill in credentials — see Configuration below
 ```
@@ -322,14 +319,6 @@ python -m pytest tests/ -v
 
 ## Disclaimer
 
-> This repository is a **portfolio showcase** only. It is derived from a real production
-> system but has been **fully sanitized**: all proprietary source-system names, internal
-> table schemas, business-specific product identifiers, credentials, and any data that
-> could identify the original organization or its clients have been removed or replaced
-> with generic equivalents.
+> This repository is a **portfolio showcase** only. It is derived from a real production system but has been **fully sanitized**: all proprietary source-system names, internal table schemas, business-specific product identifiers, credentials, and any data that could identify the original organization or its clients have been removed or replaced with generic equivalents.
 >
-> The code is shared to demonstrate data engineering patterns and is **not intended for
-> production use as-is**. No confidential information from the original implementation
-> is present in this repository.
-#   m e d a l l i o n - a r c h i t e c t u r e - s h o w c a s e  
- 
+> The code is shared to demonstrate data engineering patterns and is **not intended for production use as-is**. No confidential information from the original implementation is present in this repository.
