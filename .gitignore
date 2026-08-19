@@ -1,0 +1,15 @@
+/data
+.env
+code_explained.md
+gold_and_hive_detail.md
+hive_dbt_analysis.md
+*.parquet
+# Test output
+/reports
+.pytest_cache/
+__pycache__/
+*.pyc
+/BI
+sanitize_for_public.py
+silver_config.py
+/notebooks

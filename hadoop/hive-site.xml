@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  ─────────────────────────────────────────────────────────
+  Hive Site Configuration — Lakehouse
+  ─────────────────────────────────────────────────────────
+  Mounted into both hive-metastore and hive-server containers.
+  The metastore uses Postgres (hive-db) for schema persistence.
+  The warehouse root points to HDFS — all databases live there.
+  ─────────────────────────────────────────────────────────
+-->
+<configuration>
+
+  <!-- ── Metastore backend (Postgres) ── -->
+  <property>
+    <name>javax.jdo.option.ConnectionDriverName</name>
+    <value>org.postgresql.Driver</value>
+  </property>
+  <property>
+    <name>javax.jdo.option.ConnectionURL</name>
+    <value>jdbc:postgresql://hive-db:5432/hive</value>
+  </property>
+  <property>
+    <name>javax.jdo.option.ConnectionUserName</name>
+    <value>hive</value>
+  </property>
+  <property>
+    <name>javax.jdo.option.ConnectionPassword</name>
+    <value>REDACTED_CREDENTIAL</value>
+  </property>
+
+  <!-- ── Schema auto-create on first start ── -->
+  <property>
+    <name>datanucleus.schema.autoCreateTables</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>hive.metastore.schema.verification</name>
+    <value>false</value>
+  </property>
+
+  <!-- ── Metastore URI (used by Spark and HiveServer2) ── -->
+  <property>
+    <name>hive.metastore.uris</name>
+    <value>thrift://hive-metastore:9083</value>
+  </property>
+
+  <!-- ── HDFS warehouse root ── -->
+  <property>
+    <name>hive.metastore.warehouse.dir</name>
+    <value>hdfs://namenode:9000/warehouse</value>
+  </property>
+
+  <!-- ── HiveServer2 (no auth in dev) ── -->
+  <property>
+    <name>hive.server2.authentication</name>
+    <value>NONE</value>
+  </property>
+  <property>
+    <name>hive.server2.thrift.port</name>
+    <value>10000</value>
+  </property>
+  <property>
+    <name>hive.server2.thrift.bind.host</name>
+    <value>0.0.0.0</value>
+  </property>
+  <property>
+    <name>hive.server2.webui.port</name>
+    <value>10002</value>
+  </property>
+
+  <!-- ── Allow Spark to create external tables without strict checks ── -->
+  <property>
+    <name>hive.metastore.disallow.incompatible.col.type.changes</name>
+    <value>false</value>
+  </property>
+  <property>
+    <name>hive.metastore.event.db.notification.api.auth</name>
+    <value>false</value>
+  </property>
+
+  <!-- ── Stats (disable for external tables written by Spark) ── -->
+  <property>
+    <name>hive.stats.autogather</name>
+    <value>false</value>
+  </property>
+
+  <!-- ── HDFS namenode for Hive clients ── -->
+  <property>
+    <name>fs.defaultFS</name>
+    <value>hdfs://namenode:9000</value>
+  </property>
+
+  <!-- ── Disable user impersonation (dev only) ── -->
+  <!-- HiveServer2 container runs as root; Hadoop blocks root impersonating  -->
+  <!-- 'anonymous' (blank username). Setting false removes that restriction. -->
+  <property>
+    <name>hive.server2.enable.doAs</name>
+    <value>false</value>
+  </property>
+
+</configuration>

@@ -1,0 +1,4 @@
+# Test dependencies for the BCP-Project test suite
+pytest>=9.0
+pyspark==3.5.1
+python-dotenv==1.0.1

@@ -1,0 +1,33 @@
+name: Docker — Build Airflow Image
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "airflow/Dockerfile"
+      - "airflow/requirements.txt"
+
+jobs:
+  build:
+    name: Build custom Airflow image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Airflow image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./airflow
+          file: ./airflow/Dockerfile
+          push: false
+          tags: bcp-airflow:latest
+          # Cache layers across runs to speed up re-builds
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

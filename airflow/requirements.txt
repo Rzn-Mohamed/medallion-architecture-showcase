@@ -1,0 +1,10 @@
+# Airflow providers (pinned to avoid slow resolution against airflow 2.8.1)
+apache-airflow-providers-apache-spark==4.7.1
+apache-airflow-providers-http==4.10.0
+# NiFi API client
+nipyapi==0.21.0
+# pyspark needed for provider import, but skip its deps since we have Spark binaries
+pyspark==3.5.3
+requests
+# Docker SDK — used by Airflow tasks to stop/start sibling containers
+docker==7.1.0

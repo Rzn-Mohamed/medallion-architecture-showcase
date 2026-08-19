@@ -1,0 +1,403 @@
+# ─────────────────────────────────────────
+# 🌐 LAKEHOUSE UI ACCESS
+# ─────────────────────────────────────────
+# NiFi           -> https://localhost:8443  (see .env for credentials)
+# Spark UI       -> http://localhost:8080
+# HDFS UI        -> http://localhost:9870
+# Airflow        -> http://localhost:8081   (admin / admin)
+# Hive Metastore -> thrift://localhost:9083  (schema registry)
+# HiveServer2    -> jdbc:hive2://localhost:10000  (Beeline / DBeaver / dbt)
+# Hive HS2 UI   -> http://localhost:10002
+#
+# DISABLED (Bronze phase)
+# Jupyter        -> http://localhost:8888
+# MLflow         -> http://localhost:5000
+# ─────────────────────────────────────────
+
+x-airflow-common: &airflow-common
+  build:
+    context: ./airflow
+    dockerfile: Dockerfile
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:REDACTED_CREDENTIAL@airflow-db/${AIRFLOW_DB_NAME}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__WEBSERVER__SECRET_KEY: "${AIRFLOW_SECRET_KEY}"
+    # ── SMTP (Gmail) ──
+    AIRFLOW__SMTP__SMTP_HOST: "${SMTP_HOST}"
+    AIRFLOW__SMTP__SMTP_PORT: "${SMTP_PORT}"
+    AIRFLOW__SMTP__SMTP_USER: "${SMTP_USER}"
+    AIRFLOW__SMTP__SMTP_PASSWORD: "${SMTP_PASSWORD}"
+    AIRFLOW__SMTP__SMTP_MAIL_FROM: "${SMTP_MAIL_FROM}"
+    AIRFLOW__SMTP__SMTP_STARTTLS: "True"
+    # ── Project vars ──
+    NIFI_API_URL: "${NIFI_API_URL}"
+    NIFI_USERNAME: "${NIFI_USERNAME}"
+    NIFI_PASSWORD: "${NIFI_PASSWORD}"
+    NIFI_PROCESSOR_GROUP: "${NIFI_PROCESSOR_GROUP}"
+    SPARK_MASTER_URL: "${SPARK_MASTER_URL}"
+    HDFS_NAMENODE: "${HDFS_NAMENODE}"
+    ALERT_EMAIL: "${ALERT_EMAIL}"
+    HIVE_METASTORE_URI: "${HIVE_METASTORE_URI}"
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./spark/jobs:/opt/airflow/spark/jobs
+    - ./data:/opt/airflow/data
+    - ./hadoop/core-site.xml:/opt/hadoop/conf/core-site.xml
+    - ./hadoop/hdfs-site.xml:/opt/hadoop/conf/hdfs-site.xml
+    # Docker socket — allows Airflow tasks to stop/start sibling containers
+    - /var/run/docker.sock:/var/run/docker.sock
+  depends_on:
+    airflow-db:
+      condition: service_healthy
+  networks:
+    - lakehouse-net
+
+services:
+
+  # ─────────────────────────────────────────
+  # HDFS
+  # ─────────────────────────────────────────
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    hostname: namenode
+    environment:
+      CLUSTER_NAME: lakehouse
+      CORE_CONF_fs_defaultFS: hdfs://namenode:9000
+    volumes:
+      - namenode-data:/hadoop/dfs/name
+      - ./hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml
+      - ./hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml
+    ports:
+      - "9870:9870"
+      - "9000:9000"
+    mem_limit: 768m
+    mem_reservation: 384m
+    restart: unless-stopped
+    networks:
+      - lakehouse-net
+
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode
+    hostname: datanode
+    environment:
+      CORE_CONF_fs_defaultFS: hdfs://namenode:9000
+    volumes:
+      - datanode-data:/hadoop/dfs/data
+    depends_on:
+      - namenode
+    ports:
+      - "9864:9864"
+    mem_limit: 768m
+    mem_reservation: 384m
+    restart: unless-stopped
+    networks:
+      - lakehouse-net
+
+  # ─────────────────────────────────────────
+  # NIFI
+  # ─────────────────────────────────────────
+  nifi:
+    image: apache/nifi:1.25.0
+    container_name: nifi
+    hostname: nifi
+    environment:
+      SINGLE_USER_CREDENTIALS_USERNAME: ${NIFI_USERNAME}
+      SINGLE_USER_CREDENTIALS_PASSWORD: ${NIFI_PASSWORD}
+      NIFI_WEB_PROXY_HOST: "nifi:8443"
+    volumes:
+      - ./data/raw:/opt/nifi/data
+      - ./hadoop/core-site.xml:/opt/hadoop/conf/core-site.xml
+      - ./hadoop/hdfs-site.xml:/opt/hadoop/conf/hdfs-site.xml
+      - nifi-conf:/opt/nifi/nifi-current/conf
+    ports:
+      - "8443:8443"
+    mem_limit: 1536m
+    mem_reservation: 768m
+    restart: unless-stopped
+    networks:
+      - lakehouse-net
+
+  # ─────────────────────────────────────────
+  # SPARK
+  # ─────────────────────────────────────────
+  spark-master:
+    image: apache/spark:3.5.3
+    container_name: spark-master
+    hostname: spark-master
+    user: root
+    command: >
+      bash -c "
+        mkdir -p /home/spark/.ivy2/cache /home/spark/.ivy2/jars &&
+        chown -R spark:spark /home/spark/.ivy2 &&
+        su spark -c '/opt/spark/bin/spark-class org.apache.spark.deploy.master.Master'
+      "
+    environment:
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: 7077
+      SPARK_MASTER_WEBUI_PORT: 8080
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+    volumes:
+      - ./spark/jobs:/opt/spark/jobs
+      - ./spark/jars:/opt/spark/jars/iceberg
+      - spark-ivy-cache:/home/spark/.ivy2
+    mem_limit: 512m
+    mem_reservation: 256m
+    restart: unless-stopped
+    networks:
+      - lakehouse-net
+
+  spark-worker:
+    image: apache/spark:3.5.3
+    container_name: spark-worker
+    user: root
+    command: >
+      bash -c "
+        mkdir -p /home/spark/.ivy2/cache /home/spark/.ivy2/jars &&
+        chown -R spark:spark /home/spark/.ivy2 &&
+        su spark -c '/opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077'
+      "
+    environment:
+      SPARK_WORKER_MEMORY: 3G
+      SPARK_WORKER_CORES: 2
+    depends_on:
+      - spark-master
+    volumes:
+      - ./spark/jobs:/opt/spark/jobs
+      - ./spark/jars:/opt/spark/jars/iceberg
+      - spark-ivy-cache:/home/spark/.ivy2
+    mem_limit: 3584m
+    mem_reservation: 2048m
+    restart: unless-stopped
+    networks:
+      - lakehouse-net
+
+  # ─────────────────────────────────────────
+  # AIRFLOW
+  # ─────────────────────────────────────────
+  airflow-db:
+    image: postgres:14
+    container_name: airflow-db
+    environment:
+      POSTGRES_DB: ${AIRFLOW_DB_NAME}
+      POSTGRES_USER: ${AIRFLOW_DB_USER}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+    volumes:
+      - airflow-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+    mem_limit: 256m
+    mem_reservation: 128m
+    restart: unless-stopped
+    networks:
+      - lakehouse-net
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow-init
+    command: >
+      bash -c "
+      airflow db migrate &&
+      airflow users create --username ${AIRFLOW_ADMIN_USERNAME} --password ${AIRFLOW_ADMIN_PASSWORD}
+      --firstname Admin --lastname User --role Admin --email admin@example.com
+      "
+    mem_limit: 512m
+    mem_reservation: 256m
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow-webserver
+    command: webserver
+    ports:
+      - "8081:8080"
+    depends_on:
+      - airflow-init
+    mem_limit: 768m
+    mem_reservation: 384m
+    restart: always
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-scheduler
+    command: scheduler
+    depends_on:
+      - airflow-init
+    mem_limit: 768m
+    mem_reservation: 384m
+    restart: always
+
+  # ─────────────────────────────────────────
+  # HIVE METASTORE (schema registry for Bronze, Silver, Gold)
+  # ─────────────────────────────────────────
+  hive-db:
+    image: postgres:13          # PG14+ uses SCRAM-SHA-256 by default; bde2020/hive:2.3.2 only supports md5 (pg driver 9.4)
+    container_name: hive-db
+    hostname: hive-db
+    environment:
+      POSTGRES_DB: hive
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hive
+    volumes:
+      - hive-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "hive"]
+      interval: 5s
+      retries: 5
+    mem_limit: 256m
+    mem_reservation: 128m
+    restart: unless-stopped
+    networks:
+      - lakehouse-net
+
+  hive-metastore:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-metastore
+    hostname: hive-metastore
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870 hive-db:5432"
+    env_file:
+      - .env
+    # hive-init.sh initialises the Postgres schema then starts the metastore.
+    # Using bash explicitly avoids permission issues with Windows-mounted files.
+    command: ["bash", "/hive-init.sh"]
+    volumes:
+      - ./hadoop/hive-site.xml:/opt/hive/conf/hive-site.xml
+      - ./hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml
+      - ./hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml
+      - ./hadoop/hive-init.sh:/hive-init.sh
+    depends_on:
+      hive-db:
+        condition: service_healthy
+      namenode:
+        condition: service_started
+    ports:
+      - "9083:9083"
+    # Healthcheck: TCP probe on thrift port — Docker waits for this before
+    # starting hive-server and before Spark jobs attempt to connect.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9083"]
+      interval: 10s
+      timeout: 5s
+      retries: 18        # up to 3 minutes for JVM + schema init
+      start_period: 30s
+    mem_limit: 768m
+    mem_reservation: 384m
+    restart: unless-stopped
+    networks:
+      - lakehouse-net
+
+  hive-server:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-server
+    hostname: hive-server
+    environment:
+      SERVICE_PRECONDITION: "hive-metastore:9083"
+    env_file:
+      - .env
+    command: /opt/hive/bin/hive --service hiveserver2
+    volumes:
+      - ./hadoop/hive-site.xml:/opt/hive/conf/hive-site.xml
+      - ./hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml
+      - ./hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml
+    depends_on:
+      hive-metastore:
+        condition: service_healthy   # wait for metastore thrift port, not just container start
+    ports:
+      - "10000:10000"   # JDBC / Beeline / dbt
+      - "10002:10002"   # HiveServer2 Web UI
+    mem_limit: 768m
+    mem_reservation: 384m
+    restart: unless-stopped
+    networks:
+      - lakehouse-net
+
+  # ─────────────────────────────────────────
+  # JUPYTER (DISABLED - Bronze phase)
+  # ─────────────────────────────────────────
+  # jupyter:
+  #   image: python:3.11-slim
+  #   container_name: jupyter
+  #   user: root
+  #   entrypoint: /bin/bash
+  #   command:
+  #     - -c
+  #     - |
+  #       apt-get update && apt-get install -y default-jdk &&
+  #       pip install jupyterlab pyspark==3.5.3 &&
+  #       mkdir -p /home/jovyan/work &&
+  #       jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root
+  #       --NotebookApp.token='${JUPYTER_TOKEN}' --NotebookApp.notebook_dir='/home/jovyan/work'
+  #   volumes:
+  #     - ./notebooks:/home/jovyan/work
+  #     - ./spark/jars:/opt/spark/jars/iceberg
+  #     - ./hadoop/core-site.xml:/opt/hadoop/conf/core-site.xml
+  #     - ./hadoop/hdfs-site.xml:/opt/hadoop/conf/hdfs-site.xml
+  #   ports:
+  #     - "8888:8888"
+  #   depends_on:
+  #     - spark-master
+  #     - namenode
+  #   restart: unless-stopped
+  #   networks:
+  #     - lakehouse-net
+
+  # ─────────────────────────────────────────
+  # MLFLOW (DISABLED - Bronze phase)
+  # ─────────────────────────────────────────
+  # mlflow-db:
+  #   image: postgres:14
+  #   container_name: mlflow-db
+  #   environment:
+  #     POSTGRES_DB: ${MLFLOW_DB_NAME}
+  #     POSTGRES_USER: ${MLFLOW_DB_USER}
+  #     POSTGRES_PASSWORD: ${MLFLOW_DB_PASSWORD}
+  #   volumes:
+  #     - mlflow-db-data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD", "pg_isready", "-U", "mlflow", "-d", "mlflow"]
+  #     interval: 5s
+  #     retries: 5
+  #   restart: unless-stopped
+  #   networks:
+  #     - lakehouse-net
+
+  # mlflow:
+  #   image: ghcr.io/mlflow/mlflow:v2.12.1
+  #   container_name: mlflow
+  #   command: >
+  #     mlflow server
+  #     --backend-store-uri postgresql://${MLFLOW_DB_USER}:REDACTED_CREDENTIAL@mlflow-db/${MLFLOW_DB_NAME}
+  #     --default-artifact-root hdfs://namenode:9000/mlflow/artifacts
+  #     --host 0.0.0.0
+  #     --port 5000
+  #   ports:
+  #     - "5000:5000"
+  #   depends_on:
+  #     mlflow-db:
+  #       condition: service_healthy
+  #   restart: unless-stopped
+  #   networks:
+  #     - lakehouse-net
+
+# ─────────────────────────────────────────
+# VOLUMES & NETWORKS
+# ─────────────────────────────────────────
+volumes:
+  namenode-data:
+  datanode-data:
+  airflow-db-data:
+  hive-db-data:
+  # mlflow-db-data:
+  spark-ivy-cache:
+  nifi-conf:
+
+networks:
+  lakehouse-net:
+    driver: bridge
